@@ -1,0 +1,21 @@
+"Model","R_Squared"
+"Standard LM/Num. obs.-raw",0.702790418933006
+"Standard LM/Num. obs.-probability",0.605080699645043
+"Phylo. model-Host/Num. obs.-raw (Marginal)",0.557257627414677
+"Phylo. model-Host/Num. obs.-raw (Conditional)",0.778648291868773
+"Phylo. model-Host/Num. obs.-probability (Marginal)",0.429468112603064
+"Phylo. model-Host/Num. obs.-probability (Conditional)",0.714735631700423
+"Standard LM/Num. host-raw",0.279838951771603
+"Standard LM/Num. host-probability",0.015254987858066
+"Phylo. model-Pathogen/Num. host.-raw (Marginal)",0.171618117302563
+"Phylo. model-Pathogen/Num. host.-raw (Conditional)",0.585823862997105
+"Phylo. model-Pathogen/Num. host.-probability (Marginal)",0.0132516100327777
+"Phylo. model-Pathogen/Num. host.-probability (Conditional)",0.506628222787792
+"Phylo. model-Pathoghen/Num. obs.-raw (Marginal)",0.535964042978556
+"Phylo. model-Pathoghen/Num. obs.-raw (Conditional)",0.768014986390264
+"Phylo. model-Pathoghen/Num. obs.-probability (Marginal)",0.435149697655738
+"Phylo. model-Pathoghen/Num. obs.-probability (Conditional)",0.717722850230297
+"Phylo. model-Pathoghen/Num. host-raw (Marginal)",0.221343280627961
+"Phylo. model-Pathoghen/Num. host-raw (Conditional)",0.613392474816783
+"Phylo. model-Pathoghen/Num. host-probability (Marginal)",0.0124395968984818
+"Phylo. model-Pathoghen/Num. host-probability  (Conditional)",0.506273561321553
