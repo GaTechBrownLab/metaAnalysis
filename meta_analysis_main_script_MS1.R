@@ -58,13 +58,13 @@ mytheme <- theme_bw() +
 cbpalette <- c("#0072B2", "#D55E00", "#009E73", "#CC79A7", "#56B4E9", "#999999", "#F0E442", "#000000")
 
 # Loading data
-# Data will be uploaded to Figshare
+# Data will be uploaded to Figshare - Too large for GitHub
 main.dir <- "~/GitHub/metaAnalysis_largeFiles/metaData"
 allFiles <- list.files(path = main.dir, recursive = TRUE, full.names = TRUE)
 csv_files <- allFiles[grep("\\.csv$", allFiles)]
 
 # Meta data for later
-meta <- read.csv("~/GitHub/metaAnalysis/000_combined_library.csv",
+meta <- read.csv("~/GitHub/metaAnalysis/data/000_combined_library.csv",
   sep = ",", header = T, na.strings = ""
 )
 
@@ -482,6 +482,7 @@ for (dataset_name in unique_datasets) {
 }
 
 # Save all results and predictions to files
+# These large files won't be pushed to GitHub
 write.csv(all_results, "data/results_df.csv", row.names = FALSE)
 write.csv(all_predictions, "data/all_predictions.csv", row.names = FALSE)
 
@@ -538,7 +539,7 @@ fig1 <- ggplot(fig1_dat1, aes(x = Time_std, y = Standardized_Survival)) +
 
 ggsave("figures/fig1.pdf", plot = fig1, width = 6.5, height = 5.5, units = "in", dpi = 300)
 
-# Plotting
+# Plotting - Save to model_plots folder
 prediction_plotting_data <- prediction_plotting_data %>%
   filter(!Model == "gompertz_survival_rawtime")
 prediction_plotting_data$Model <- factor(prediction_plotting_data$Model, 
@@ -751,7 +752,7 @@ pathogen_aic <- ggplot(PallData_AIC_sum, aes(x = Model, y = meanAIC, color = Mod
 ggsave("figures/pathogen_aic.pdf", plot = pathogen_aic, width = 6, height = 8, units = "in", , dpi = 300)
 
 #################################################################################################
-# FIGURE S4 - DATA TYPE #
+# FIGURE 4 - DATA TYPE #
 #################################################################################################
 
 Data_AIC <- allData_AIC_filled %>%
@@ -901,6 +902,11 @@ anova(lm(AICc~Model, data = mod_all)) #F(4/1018) = 22.55 p = < 2.2e-16 ***
 
 
 ###############################################################################################
+
+###############################################
+# Percentage of accelerating mortality # 
+# Alternative Fig 2C #
+###############################################
 
 results_with_classification <- all_results %>%
   filter(!Model == "<NA>") %>%
