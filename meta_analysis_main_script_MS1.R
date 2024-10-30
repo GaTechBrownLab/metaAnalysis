@@ -492,6 +492,8 @@ standardized_final_df <- read.table("data/standardized_final_df.csv", header = T
 all_results <- read.table("data/results_df.csv", header = T, sep = ",", dec = ".")
 all_predictions <- read.table("data/all_predictions.csv", header = T, sep = ",", dec = ".")
 
+#all_results <- read.table("~/GitHub/metaAnalysis_largeFiles/results_predictions/results_df.csv", header = T, sep = ",", dec = ".")
+#all_predictions <- read.table("~/GitHub/metaAnalysis_largeFiles/results_predictions/all_predictions.csv", header = T, sep = ",", dec = ".")
 ###############################################################################################
 # FIGURE 1 & FIGURE S1 #
 ###############################################################################################
