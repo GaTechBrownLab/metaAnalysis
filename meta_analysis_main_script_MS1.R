@@ -526,6 +526,7 @@ fig1_dat2$Model <- factor(fig1_dat2$Model,
                                      "loglogistic", "generalizedgamma"))
 
 aic <- all_results %>% filter(Dataset == "8C5XBCN2A.csv")
+
 fig1 <- ggplot(fig1_dat1, aes(x = Time_std, y = Standardized_Survival)) +
   geom_point(size = 4, color = "grey25") + # Raw data
   geom_line(data = fig1_dat2, aes(x = Time, y = Predictions, color = Model), size = 1) + # Predictions
@@ -596,10 +597,7 @@ model_counts <- ranked_results %>%
   group_by(best_model) %>%
   summarise(n = n(), .groups = 'drop')
 
-# Density plot for Mean_WAIC by Model
-all_results$Model <- factor(all_results$Model, 
-                            levels = c("exponential", "gompertz_hazard", "gompertz_survival", "weibull", "loglogistic", "generalizedgamma"))
-
+# Density plot for Mean_AIC by Model
 # Plot with ggplot2
 density2 <- ggplot(data = all_results %>% filter(Model != "gompertz_survival_rawtime") %>% 
                      distinct(Dataset, Model, .keep_all = T), aes(x = AICc, color = Model)) +
@@ -809,7 +807,7 @@ allData_AIC_sum_num <- allData_AIC_filled %>%
 
 # Delta Model i - Exponential for other models 
 allModels_delta <- all_results %>%
-  filter(Model != "<NA>") %>%
+  filter(Model != "gompertz_survival_rawtime") %>%
   distinct(Dataset, Model, .keep_all = T) %>%
   select(Dataset, Model, AICc) %>%
   spread(Model, AICc) %>%
@@ -884,10 +882,11 @@ delta_all_g2 <- ggplot(allModels_delta_g, aes(y = DeltaAIC, x = comparison)) +
 op <- op + theme(axis.text.x = element_text(angle = 45, hjust = 1))
 delta_all_g2 <- delta_all_g2 + theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-combined_plot_1 <- density2 + op + delta_all_g2 +
+# Manuscript Figure 2
+combined_plot_1 <- density2 + op +
   plot_annotation(tag_levels = 'A')
 
-ggsave("figures/combined_plot_fig2.pdf", plot = combined_plot_1, width = 15, height = 5, units = "in", dpi = 300)
+ggsave("figures/combined_plot_fig2.pdf", plot = combined_plot_1, width = 10, height = 5, units = "in", dpi = 300)
 
 summary(lm(DeltaAIC~comparison, data = allModels_delta)) 
 anova(lm(DeltaAIC~comparison, data = allModels_delta)) #F(3/736)=1.1332 p=0.3348
@@ -902,16 +901,15 @@ mod_all <- all_results %>%
 summary(lm(AICc~Model, data = mod_all)) 
 anova(lm(AICc~Model, data = mod_all)) #F(4/1018) = 22.55 p = < 2.2e-16 ***
 
-
 ###############################################################################################
 
 ###############################################
 # Percentage of accelerating mortality # 
-# Alternative Fig 2C #
+# Won't be included in the manuscript figure #
 ###############################################
 
 results_with_classification <- all_results %>%
-  filter(!Model == "<NA>") %>%
+  filter(!Model == "gompertz_survival_rawtime") %>%
   group_by(Dataset) %>%
   filter(AICc == min(AICc)) %>%
   mutate(
@@ -936,29 +934,72 @@ results_with_classification <- all_results %>%
 results_with_classification %>%
   group_by(Mortality_Type) %>%
   summarise(count = n()) 
- #86% accelerating %12 constant %2 decelerating
-  
+#86% accelerating %12 constant %2 decelerating
+
 altC <- results_with_classification %>%
   group_by(Mortality_Type, Model) %>%
-  summarise(count = n())
-
+  summarise(count = n()) %>%
+  filter(Model == "gompertz_survival" | Model == "weibull")
+  
 altCplot <- ggplot(altC, aes(y = Mortality_Type, x = count, fill = Model))+
   geom_bar(stat = "identity", color = "grey25")+
   mytheme+
   xlab("Number of datasets")+
   ylab("m(t)")+
-  scale_fill_manual(values = cbpalette,labels = c("Constant", "Gompertz", "Weibull", "Log-logistic", "Gen.-gamma"))+
+  scale_fill_manual(values = c("#0072B2", "#D55E00"),labels = c("Gompertz", "Weibull"))+
   theme(legend.position = c(0.8, 0.8))
 
-
-combined_plot_2 <- density2 +  op + altCplot +
-  plot_annotation(tag_levels = 'A')
-
-ggsave("figures/combined_plot_fig2_NEW.pdf", plot = combined_plot_2, width = 15, height = 5, units = "in", dpi = 300)
-
 results_with_classification_all <- all_results %>%
-  filter(!is.na(Model)) %>%
+  distinct(Dataset, Model, .keep_all = T) %>%
+  filter(!Model == "gompertz_survival_rawtime") %>%
   group_by(Dataset) %>%
+  filter(AICc == min(AICc)) %>%
+  ungroup() %>%
+  mutate(
+    Mortality_Type = case_when(
+      Model == "exponential" ~ "Constant",
+      Model == "gompertz_survival" ~ "Other",
+      Model == "weibull" ~ "Other",
+      Model == "loglogistic" ~ "Other",
+      Model == "generalizedgamma" ~ "Other",
+    )
+  ) %>%
+  select(Dataset, Mortality_Type) 
+
+# Inspection 
+
+results_with_classification_gom <- all_results %>%
+  filter(!Model == "gompertz_survival_rawtime") %>%
+  group_by(Dataset) %>%
+  mutate(
+    Mortality_Type = case_when(
+      Model == "exponential" ~ "Constant",
+      Model == "gompertz_survival" & b > 0 ~ "Accelerating",
+      Model == "gompertz_survival" & b < 0 ~ "Decelerating",
+      Model == "gompertz_survival" & b == 0 ~ "Constant",
+      Model == "weibull" & k > 1 ~ "Accelerating",
+      Model == "weibull" & k < 1 ~ "Decelerating",
+      Model == "weibull" & k == 1 ~ "Constant",
+      Model == "loglogistic" & beta > 1 ~ "Accelerating",
+      Model == "loglogistic" & beta < 1 ~ "Decelerating",
+      Model == "loglogistic" & beta == 1 ~ "Constant",
+      Model == "generalizedgamma" & gamma > 1 ~ "Accelerating",
+      Model == "generalizedgamma" & gamma < 1 ~ "Decelerating",
+      Model == "generalizedgamma" & gamma == 1 ~ "Constant",
+      TRUE ~ "Undetermined"
+    )
+  ) %>%
+  ungroup() %>%
+  distinct(Dataset, Model, .keep_all = T) %>%
+  filter(Model == "gompertz_survival" | Model == "weibull") %>%
+  filter(Mortality_Type == "Decelerating") %>%
+  select(Dataset, Model, Mortality_Type, b, k) 
+
+
+results_with_classification_constant <- all_results %>%
+  filter(!Model == "gompertz_survival_rawtime") %>%
+  group_by(Dataset) %>%
+  filter(AICc == min(AICc)) %>%
   mutate(
     Mortality_Type = case_when(
       Model == "exponential" ~ "Constant",
@@ -975,16 +1016,17 @@ results_with_classification_all <- all_results %>%
       TRUE ~ "Undetermined"
     )
   ) %>%
-  ungroup() %>% # To ensure it's not grouped after classification
-distinct(Dataset, Model, .keep_all = T)
-
-results_with_classification_all %>%
-  group_by(Mortality_Type, Model) %>%
-  summarise(count = n())
+  ungroup() %>% 
+  distinct(Dataset, .keep_all = T) %>% 
+  filter(Mortality_Type == "Constant")
 
 ################################################################################################
 # Gompertz Model Accuracy across taxa groups #
 ################################################################################################
+palette_10 <- c("#66c2a5", "#fc8d62", "#8da0cb", "#e78ac3", "#a6d854", 
+                "#ffd92f", "#e5c494", "#b3b3b3", "#a6761d", "#1f78b4")
+
+palette_6 <- c("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02")
 
 allModels_delta_gomp <- allModels_delta  %>%
   filter(comparison == "DeltaGompertz") %>%
@@ -992,9 +1034,9 @@ allModels_delta_gomp <- allModels_delta  %>%
 
 sum_host_AIC <- allData_AIC_filled %>%
   filter(Model == "gompertz_survival") %>%
+  distinct(Dataset, .keep_all = T) %>%
   left_join(allModels_delta_gomp, by = "Dataset") %>%
   filter_if(is.numeric, all_vars(is.finite(.))) %>%
-  distinct(Dataset, .keep_all = T) %>%
   group_by(Host_taxa) %>%
   summarize(Mean_AIC = mean(AICc, na.rm = T), 
             se_AIC = standard_error(AICc), 
@@ -1007,8 +1049,7 @@ sum_host_AIC <- allData_AIC_filled %>%
             Count_Dataset = n(), 
             Percent_Raw = sum(Data == "raw") / n() * 100,  # Percentage of 'raw' data
             Percent_Probability = sum(Data == "probability") / n() * 100  # Percentage of 'probability' data
-  ) %>%
-  mutate(normAIC = (Mean_AIC/(Mean_Max_num_host_filled+Mean_Num_Obs+Count_Dataset+Percent_Raw))*-1) 
+  ) 
 
 taxa_type <- allData_AIC_filled %>% 
   left_join(results_with_classification[,c(1,14)], by = "Dataset") %>%
@@ -1047,15 +1088,7 @@ aicplot <- ggplot(sum_host_AIC, aes(x = Mean_delta_AIC, y = Host_taxa))+
   mytheme+
   theme(legend.position = "none")+
   labs(y = NULL, x = expression(Delta[AICc]))+
-  scale_x_continuous(limits = c(0,60))
-
-aicplot_norm <- ggplot(sum_host_AIC, aes(x = scale(Mean_AIC), y = Host_taxa, fill = Host_taxa))+
-         geom_errorbar(aes(xmin = scale(Mean_AIC - se_AIC), xmax = scale(Mean_AIC + se_AIC)), width = 0.2)+
-  geom_point(aes(x = scale(normAIC)), shape = 21, size = 5, alpha = 0.5) +
-  geom_point(shape = 21, size = 5) +
-mytheme+
-  theme(legend.position = "none")+
-  labs(y = NULL, x = "Model accuracy")
+  scale_x_continuous(limits = c(0,75))
 
 allModels_delta_gomp$Host_taxa <- factor(allModels_delta_gomp$Host_taxa, 
                                  levels = rev(c("Seedlings",  
@@ -1127,9 +1160,7 @@ sum_host_AIC_p <- allData_AIC_filled %>%
             Count_Dataset = n(), 
             Percent_Raw = sum(Data == "raw") / n() * 100,  # Percentage of 'raw' data
             Percent_Probability = sum(Data == "probability") / n() * 100  # Percentage of 'probability' data
-  )%>%
-  mutate(normAIC = (Mean_AIC/(Mean_Max_num_host_filled+Mean_Num_Obs+Count_Dataset+Percent_Raw))*-1)
-
+  )
 
 taxa_typep <- allData_AIC_filled %>% 
   left_join(results_with_classification[,c(1,14)], by = "Dataset") %>%
@@ -1167,16 +1198,7 @@ aicplot_p <- ggplot(sum_host_AIC_p, aes(x = Mean_delta_AIC, y = Pathogen_taxa))+
   mytheme+
   theme(legend.position = "none")+
   labs(y = NULL, x = expression(Delta[AICc]))+
-  scale_x_continuous(limits = c(0,60))
-
-aicplot_norm_p <- ggplot(sum_host_AIC_p, aes(x = scale(Mean_AIC), y = Pathogen_taxa, fill = Pathogen_taxa))+
-  geom_errorbar(aes(xmin = scale(Mean_AIC - se_AIC), xmax = scale(Mean_AIC + se_AIC)), width = 0.2)+
-  geom_point(aes(x = scale(normAIC)), shape = 21, size = 5, alpha = 0.5) +
-  geom_point(shape = 21, size = 5) +
-  mytheme+
-  theme(legend.position = "none")+
-  labs(y = NULL, x = "Model accuracy")+
-  scale_fill_manual(values = palette_10)
+  scale_x_continuous(limits = c(0,75))
 
 otherplots1_p <- ggplot(sum_host_AIC_p, aes(x = Count_Dataset, y = Pathogen_taxa, fill = Pathogen_taxa)) +
   geom_bar(stat = "identity", width = 0.5, color = "black") +
@@ -1225,5 +1247,130 @@ datatype_p <- ggplot(sum_pat_AIC_long_percent, aes(x = Mean_AIC, y = Pathogen_ta
 # Combine the plots, aligning them with a shared y-axis on the first plot
 final_plot_p <- aicplot_p + otherplots1_p + otherplots2_p + otherplots3_p + datatype_p + plot_layout(ncol = 5, widths = c(1, 1, 1, 1, 1))
 
+# Figure 3
 alt_final_plot1 <- aicplot + aicplot_p + plot_layout(ncol = 2, widths = c(1, 1))+ plot_annotation(tag_levels = 'A')
-alt_final_plot2 <- ttype + ttype_p + plot_layout(ncol = 2, widths = c(1, 1))+ plot_annotation(tag_levels = 'A')
+
+#Stats for Figure 3
+
+dataForStats <- allData_AIC_filled %>%
+  filter(Model == "gompertz_survival") %>%
+  left_join(allModels_delta_gomp, by = "Dataset") %>%
+  filter_if(is.numeric, all_vars(is.finite(.))) %>%
+  distinct(Dataset, .keep_all = T) %>%
+  select(Host_taxa, Pathogen_taxa, DeltaAIC)
+
+
+results <- dataForStats %>%
+  group_by(Host_taxa) %>%
+  summarize(
+    t_test_result = list(t.test(DeltaAIC, mu = 0)),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    t_statistic = map_dbl(t_test_result, ~ .x$statistic),
+    p_value = map_dbl(t_test_result, ~ .x$p.value),
+    mean_deltaAIC = map_dbl(t_test_result, ~ .x$estimate),
+    significance = case_when(
+      p_value <= 0.001 ~ "***",
+      p_value <= 0.01  ~ "**",
+      p_value <= 0.05  ~ "*",
+      p_value <= 0.1   ~ ".",
+      TRUE             ~ ""
+    )
+  ) %>%
+  select(-t_test_result)
+
+results_pat <- dataForStats %>%
+  group_by(Pathogen_taxa) %>%
+  summarize(
+    t_test_result = list(t.test(DeltaAIC, mu = 0)),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    t_statistic = map_dbl(t_test_result, ~ .x$statistic),
+    p_value = map_dbl(t_test_result, ~ .x$p.value),
+    mean_deltaAIC = map_dbl(t_test_result, ~ .x$estimate),
+    significance = case_when(
+      p_value <= 0.001 ~ "***",
+      p_value <= 0.01  ~ "**",
+      p_value <= 0.05  ~ "*",
+      p_value <= 0.1   ~ ".",
+      TRUE             ~ ""
+    )
+  ) %>%
+  select(-t_test_result)
+
+###########################################################
+# Constant mortality exploration 
+
+sum_AIC_constant <- allData_AIC_filled %>%
+  left_join(allModels_delta_gomp, by = "Dataset") %>%
+  filter_if(is.numeric, all_vars(is.finite(.))) %>%
+  distinct(Dataset, .keep_all = T) %>%
+  left_join(results_with_classification_all, by = "Dataset")  %>%
+  group_by(Mortality_Type) %>%
+  summarize(Mean_delta_AIC = mean(DeltaAIC, na.rm = T),
+            se_delta_AIC = standard_error(DeltaAIC),
+            Mean_Max_num_host_filled  = mean(Max_num_host_filled, na.rm = T),
+            Mean_Num_Obs = mean(Num_Obs, na.rm = T),
+            Count_Dataset = n(), 
+            Percent_Raw = sum(Data == "raw") / n() * 100,  # Percentage of 'raw' data
+            Percent_Probability = sum(Data == "probability") / n() * 100,  # Percentage of 'probability' data
+            se_Mean_Num_Obs = standard_error(Num_Obs),
+            se_Max_num_host_filled = standard_error(Max_num_host_filled)) 
+
+otherplots1_c <- ggplot(sum_AIC_constant, aes(y = Mean_delta_AIC, x = Mortality_Type)) +
+  geom_bar(stat = "identity", width = 0.5, color = "black") +
+  geom_errorbar(aes(ymin = Mean_delta_AIC - se_delta_AIC, ymax = Mean_delta_AIC + se_delta_AIC), width = 0.2)+
+  mytheme +
+  theme(legend.position = "none") +
+  labs(x = NULL, y = expression(Delta[AICc]))
+
+otherplots2_c <- ggplot(sum_AIC_constant, aes(y = Mean_Num_Obs, x = Mortality_Type)) +
+  geom_bar(stat = "identity", width = 0.5, color = "black") +
+  geom_errorbar(aes(ymin = Mean_Num_Obs - se_Mean_Num_Obs, ymax = Mean_Num_Obs + se_Mean_Num_Obs), width = 0.2)+
+  mytheme +
+  theme(legend.position = "none") +
+  labs(x = NULL, y = "Num. Observations")
+
+otherplots3_c <- ggplot(sum_AIC_constant, aes(y = Mean_Max_num_host_filled, x = Mortality_Type)) +
+  geom_bar(stat = "identity", width = 0.5, color = "black") +
+  geom_errorbar(aes(ymin = Mean_Max_num_host_filled - se_Max_num_host_filled, ymax = Mean_Max_num_host_filled + se_Max_num_host_filled), width = 0.2)+
+  mytheme +
+  theme(legend.position = "none") +
+  labs(x = NULL, y = "Num. Host") 
+
+# Reshape the data to long format for Percent_Raw and Percent_Probability
+sum_pat_AIC_long_percent_c <- sum_AIC_constant %>%
+  select(Mortality_Type, Percent_Raw, Percent_Probability) %>%
+  pivot_longer(cols = c(Percent_Raw, Percent_Probability), names_to = "Data_Type", values_to = "Percentage")
+
+
+# Plot Mean_AIC and the stacked bar plot for percentages
+datatype_p_c <- ggplot(sum_pat_AIC_long_percent_c, aes(y = Mean_AIC, x = Mortality_Type)) +
+  # Stacked bar plot for Percent_Raw and Percent_Probability
+  geom_bar(data = sum_pat_AIC_long_percent_c, aes(y = Percentage, x = Mortality_Type, fill = Data_Type), 
+           stat = "identity", position = "stack", width = 0.5, inherit.aes = FALSE, color = "black") +
+  
+  scale_fill_manual(values = c("Percent_Raw" = "grey20", "Percent_Probability" = "grey90", "Host_taxa" = palette_10)) +
+  mytheme +
+  theme(legend.position = "none") +
+  labs(y = "Data Type", x = NULL)
+
+# Combine the plots, aligning them with a shared y-axis on the first plot
+
+# Manuscript Figure 4
+constant_plot <- otherplots2_c + otherplots3_c + datatype_p_c + plot_annotation(tag_levels = 'A')
+
+# Stats 
+sum_AIC_constant_stats <- allData_AIC_filled %>%
+  left_join(allModels_delta_gomp, by = "Dataset") %>%
+  filter_if(is.numeric, all_vars(is.finite(.))) %>%
+  distinct(Dataset, .keep_all = T) %>%
+  left_join(results_with_classification_all, by = "Dataset") %>%
+  select(Mortality_Type, Max_num_host_filled, Num_Obs)
+
+sum_AIC_constant_stats$Mortality_Type <- as.factor(sum_AIC_constant_stats$Mortality_Type)
+
+t.test(Num_Obs ~ Mortality_Type, var.equal = FALSE, data=sum_AIC_constant_stats)
+t.test(Max_num_host_filled ~ Mortality_Type, var.equal = FALSE, data=sum_AIC_constant_stats)
