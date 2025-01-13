@@ -1,6 +1,6 @@
 # Meta survival data analysis
 # Author: Canan Karakoc
-# Last update: October 30, 2024
+# Last update: December 11, 2024
 
 ################################################################################################
 # SETUP #
@@ -668,9 +668,11 @@ allData_AIC_sum <- allData_AIC_filled %>%
     is.finite(as.numeric(Num_Obs)),
     is.finite(as.numeric(Max_num_host_filled))
   ) %>%
+  distinct(Dataset, Model, .keep_all = T) %>%
   group_by(Model, Host_taxa) %>%
   summarize(
     meanAIC = mean(as.numeric(AICc), na.rm = TRUE),
+    sdAIC = sd(as.numeric(AICc)),
     seAIC = standard_error(as.numeric(AICc)),
     meanObs = round(mean(as.numeric(Num_Obs), na.rm = TRUE), 0),
     meanHost = round(mean(as.numeric(Max_num_host_filled), na.rm = TRUE), 0),
@@ -704,7 +706,91 @@ host_aic <- ggplot(allData_AIC_sum, aes(x = Model, y = meanAIC, color = Model)) 
   guides(color = guide_legend(nrow = 2, byrow = TRUE))+
   scale_color_manual(values = cbpalette, labels = c("Constant", "Gompertz", "Weibull", "Log-logistic", "Gen.-gamma")) 
 
-ggsave("figures/host_aic.pdf", plot = host_aic, width = 6, height = 12, units = "in", dpi = 300)
+ggsave("figures/host_aic.pdf", plot = host_aic, width = 6, height = 13, units = "in", dpi = 300)
+
+
+# Stat 
+allData_AIC_stat <- allData_AIC_filled %>%
+  filter(
+    is.finite(as.numeric(AICc)),
+    is.finite(as.numeric(Num_Obs)),
+    is.finite(as.numeric(Max_num_host_filled))
+  ) %>%
+  distinct(Dataset, Model, .keep_all = T)
+
+
+library(rstatix)
+library(multcompView)
+library(emmeans)
+library(multcomp)
+library(purrr)
+
+# Create CLDs for AICc comparisons within each Host_taxa group
+cld_results <- allData_AIC_stat %>%
+  filter(!Model == "gompertz_survival_rawtime") %>%
+  group_by(Host_taxa) %>%
+  nest() %>% # Nest data by Host_taxa for grouped operations
+  mutate(
+    model = map(data, ~ lm(AICc ~ Model, data = .x)), # Fit a model for each Host_taxa
+    emms = map(model, ~ emmeans(.x, pairwise ~ Model)), # Get emmeans and pairwise comparisons
+    cld = map(emms, ~ cld(.x)) # Generate compact letter displays
+  ) %>%
+  # Define Host_taxa as names for the cld list
+  mutate(Host_taxa = as.character(Host_taxa)) %>% # Ensure Host_taxa is a character vector
+  { set_names(.$cld, .$Host_taxa) } # Set the names of the cld list to Host_taxa
+
+
+# Function to map numbers to letters, cleaning input first
+number_to_letter <- function(x) {
+  sapply(x, function(num) {
+    # Clean the input: trim spaces and remove non-numeric characters
+    cleaned_num <- gsub("[^0-9]", "", trimws(as.character(num)))
+    
+    # Split cleaned number into individual digits, map to letters, and concatenate
+    if (nchar(cleaned_num) > 0) {
+      paste0(letters[as.numeric(unlist(strsplit(cleaned_num, "")))], collapse = "")
+    } else {
+      NA  # Return NA if the input is empty or invalid
+    }
+  })
+}
+
+cld_data <- cld_results %>%
+  map_dfr(~ as.data.frame(.), .id = "Host_taxa") %>%
+  mutate(letters = number_to_letter(.group))
+
+# letters are added to the main data
+allData_AIC_sum_cld <- allData_AIC_sum %>%
+  left_join(cld_data, by = c("Host_taxa", "Model"))
+
+# Order factor levels
+allData_AIC_sum_cld$Host_taxa <- factor(allData_AIC_sum_cld$Host_taxa, 
+                                    levels = c("Seedlings", "Drosophila sp.", "Other insects", 
+                                               "Nematodes", "Moth larvae", "Other invertebrates", 
+                                               "Fish", "Avian", "Mice", "Other mammals"))
+# Create the plot and add the CLD letters
+host_aic_cld <- ggplot(allData_AIC_sum_cld, aes(x = Model, y = meanAIC, color = Model)) +
+  geom_point(size = 5, shape = 21) +
+  geom_errorbar(aes(ymin = meanAIC - seAIC, ymax = meanAIC + seAIC), width = 0.2) +
+  facet_wrap(~Host_taxa, ncol = 2, scales = "free") +
+  mytheme +
+  theme(axis.text.x = element_blank(), strip.background = element_blank(), axis.title.x = element_blank()) +
+  ylab("AICc") +
+  # Add dataset and observation info
+  geom_text(aes(label = paste0("num. datasets = ", numData)), x = Inf, y = Inf, hjust = 1.1, vjust = 1.2, size = 4, check_overlap = TRUE, show.legend = FALSE) +
+  geom_text(aes(label = paste0("num. time obs. = ", meanObs)), x = Inf, y = Inf, hjust = 1.1, vjust = 2.3, size = 4, check_overlap = TRUE, show.legend = FALSE) +
+  geom_text(aes(label = paste0("avg. host reps = ", meanHost)), x = Inf, y = Inf, hjust = 1.1, vjust = 3.4, size = 4, check_overlap = TRUE, show.legend = FALSE) +
+  # Add CLD letters above error bars
+  geom_text(aes(label = letters, y = meanAIC + seAIC), vjust = -0.5, size = 4, check_overlap = TRUE, show.legend = FALSE) +
+  # Add space at the top of each panel
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.5))) +
+  theme(legend.position = "bottom") +
+  guides(color = guide_legend(nrow = 2, byrow = TRUE)) +
+  scale_color_manual(values = cbpalette, labels = c("Constant", "Gompertz", "Weibull", "Log-logistic", "Gen.-gamma"))
+
+
+ggsave("figures/host_aic_cld.pdf", plot = host_aic_cld, width = 6, height = 12, units = "in", dpi = 300)
+
 
 # PATGOGEN
 # Order factor levels
@@ -714,6 +800,7 @@ PallData_AIC_sum <- allData_AIC_filled %>%
     is.finite(as.numeric(Num_Obs)),
     is.finite(as.numeric(Max_num_host_filled))
   ) %>%
+  distinct(Dataset, Model, .keep_all = T) %>%
   group_by(Model, Pathogen_taxa) %>%
   summarize(
     meanAIC = mean(as.numeric(AICc)),
@@ -734,7 +821,6 @@ PallData_AIC_sum$Model <- factor(PallData_AIC_sum$Model,
                                              "loglogistic", "generalizedgamma"))
 
 
-
 # Create the plot and add the annotations
 pathogen_aic <- ggplot(PallData_AIC_sum, aes(x = Model, y = meanAIC, color = Model)) +
   geom_point(size = 5, shape = 21) +
@@ -751,6 +837,56 @@ pathogen_aic <- ggplot(PallData_AIC_sum, aes(x = Model, y = meanAIC, color = Mod
   guides(color = guide_legend(nrow = 2, byrow = TRUE))
 
 ggsave("figures/pathogen_aic.pdf", plot = pathogen_aic, width = 6, height = 8, units = "in", , dpi = 300)
+
+
+# Create CLDs for AICc comparisons within each Host_taxa group
+cld_results_pat <- allData_AIC_stat %>%
+  filter(!Model == "gompertz_survival_rawtime") %>%
+  group_by(Pathogen_taxa) %>%
+  nest() %>% # Nest data by Host_taxa for grouped operations
+  mutate(
+    model = map(data, ~ lm(AICc ~ Model, data = .x)), # Fit a model for each Host_taxa
+    emms = map(model, ~ emmeans(.x, pairwise ~ Model)), # Get emmeans and pairwise comparisons
+    cld = map(emms, ~ cld(.x)) # Generate compact letter displays
+  ) %>%
+  # Define Host_taxa as names for the cld list
+  mutate(Pathogen_taxa = as.character(Pathogen_taxa)) %>% # Ensure Host_taxa is a character vector
+  { set_names(.$cld, .$Pathogen_taxa) } # Set the names of the cld list to Host_taxa
+
+cld_data_pat <- cld_results_pat %>%
+  map_dfr(~ as.data.frame(.), .id = "Pathogen_taxa") %>%
+  mutate(letters = number_to_letter(.group))
+
+# letters are added to the main data
+allData_AIC_sum_cld_pat <- PallData_AIC_sum %>%
+  left_join(cld_data_pat, by = c("Pathogen_taxa", "Model"))
+
+allData_AIC_sum_cld_pat$Pathogen_taxa <- factor(allData_AIC_sum_cld_pat$Pathogen_taxa, 
+                                         levels = c("Gram-positive bacteria", "Gram-negative bacteria",
+                                                    "DNA virus", "RNA virus", "Fungi", "Protozoan parasite"))
+
+# Create the plot and add the CLD letters
+pat_aic_cld <- ggplot(allData_AIC_sum_cld_pat, aes(x = Model, y = meanAIC, color = Model)) +
+  geom_point(size = 5, shape = 21) +
+  geom_errorbar(aes(ymin = meanAIC - seAIC, ymax = meanAIC + seAIC), width = 0.2) +
+  geom_boxplot(data = allData_AIC_stat, aes( y = AICc))+
+  facet_wrap(~Pathogen_taxa, ncol = 2, scales = "free") +
+  mytheme +
+  theme(axis.text.x = element_blank(), strip.background = element_blank(), axis.title.x = element_blank()) +
+  ylab("AICc") +
+  # Add dataset and observation info
+  geom_text(aes(label = paste0("num. datasets = ", numData)), x = Inf, y = Inf, hjust = 1.1, vjust = 1.2, size = 4, check_overlap = TRUE, show.legend = FALSE) +
+  geom_text(aes(label = paste0("num. time obs. = ", meanObs)), x = Inf, y = Inf, hjust = 1.1, vjust = 2.3, size = 4, check_overlap = TRUE, show.legend = FALSE) +
+  geom_text(aes(label = paste0("avg. host reps = ", meanHost)), x = Inf, y = Inf, hjust = 1.1, vjust = 3.4, size = 4, check_overlap = TRUE, show.legend = FALSE) +
+  # Add CLD letters above error bars
+  geom_text(aes(label = letters, y = meanAIC + seAIC), vjust = -0.5, size = 4, check_overlap = TRUE, show.legend = FALSE) +
+  # Add space at the top of each panel
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.5))) +
+  theme(legend.position = "bottom") +
+  guides(color = guide_legend(nrow = 2, byrow = TRUE)) +
+  scale_color_manual(values = cbpalette, labels = c("Constant", "Gompertz", "Weibull", "Log-logistic", "Gen.-gamma"))
+
+ggsave("figures/pathogen_aic_cld.pdf", plot = pat_aic_cld, width = 6, height = 8, units = "in", , dpi = 30)
 
 #################################################################################################
 # DATA TYPE #
@@ -810,7 +946,7 @@ allData_AIC_sum_num <- allData_AIC_filled %>%
 allModels_delta <- all_results %>%
   filter(Model != "gompertz_survival_rawtime") %>%
   distinct(Dataset, Model, .keep_all = T) %>%
-  select(Dataset, Model, AICc) %>%
+  dplyr::select(Dataset, Model, AICc) %>%
   spread(Model, AICc) %>%
   group_by(Dataset) %>%
   summarise(exponential = mean(exponential, na.rm = TRUE), gompertz_survival = mean(gompertz_survival, na.rm =T), 
@@ -841,40 +977,112 @@ op <- ggplot(allModels_delta, aes(y = DeltaAIC, x = comparison)) +
   scale_x_discrete(labels = c("Gompertz", "Weibull", "Log-logistic", "Gen.-gamma"))+
   scale_y_continuous(limits = c(-30,30))
 
-allData_AIC_filled$Model <- factor(allData_AIC_filled$Model, 
-                                    levels = c("exponential", "gompertz_survival", "gompertz_hazard", "weibull", 
-                                               "loglogistic", "generalizedgamma"))
+# Review addition: Colors for hosts 
 
-Comp_gomp <- ggplot(all_results %>% filter(Model != "<NA>"), 
-                    aes(y = AICc, x = Model))+
-  geom_jitter(size = 3, shape = 21, color = "grey50")+
-  geom_boxplot(fill = "white", , alpha  = 0.7)+
+palette_10 <- c("#66c2a5", "#fc8d62", "#8da0cb", "#e78ac3", "#a6d854", 
+                "#ffd92f", "#e5c494", "#b3b3b3", "#a6761d", "#1f78b4")
+
+palette_6 <- c("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02")
+
+allModels_delta_merge <- allModels_delta %>%
+  left_join(allData_AIC_filled, by = "Dataset") %>%
+  distinct(Dataset, comparison, .keep_all = T) 
+
+allModels_delta_merge$Host_taxa <- factor(allModels_delta_merge$Host_taxa, 
+                                          levels = (c("Seedlings",  
+                                                      "Nematodes", "Other invertebrates", "Drosophila sp.", "Moth larvae", "Other insects",
+                                                      "Avian", "Mice", "Other mammals", "Fish")))
+
+
+op_rew <- ggplot(allModels_delta_merge, aes(y = DeltaAIC, x = comparison, fill = Host_taxa)) +
+  geom_hline (yintercept = 0, linetype = "dashed")+
+  geom_jitter(size = 3, shape = 21, color = "grey50", alpha = 0.7)+
+  geom_boxplot(fill = "white", , alpha  = 0.5)+
   mytheme+
-  labs(y = "AICc", x = NULL)+
-  scale_x_discrete(labels = c("Constant", "Gompertz", "Weibull", "Log-logistic", "Gen.-gamma"))
+  labs(y = expression(AICc[C] - AICc[j]), x = NULL)+
+  scale_x_discrete(labels = c("Gompertz", "Weibull", "Log-logistic", "Gen.-gamma"))+
+  scale_y_continuous(limits = c(-30,30))+
+  scale_fill_manual(values = palette_10)
 
-# Combine the plots and add labels
+
 op <- op + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+op_rew <- op_rew + theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 # Manuscript Figure 2
 combined_plot_1 <- density2 + op +
   plot_annotation(tag_levels = 'A')
 
+combined_plot_1_rew <- density2 + op_rew +
+  plot_annotation(tag_levels = 'A')
+
 ggsave("figures/combined_plot_fig2.pdf", plot = combined_plot_1, width = 10, height = 5, units = "in", dpi = 300)
+ggsave("figures/combined_plot_fig2_rew.pdf", plot = combined_plot_1_rew, width = 12, height = 5, units = "in", dpi = 300)
 
-summary(lm(DeltaAIC~comparison, data = allModels_delta)) 
-anova(lm(DeltaAIC~comparison, data = allModels_delta)) #F(3/736)=1.1332 p=0.3348
+delta_model <- lm(DeltaAIC~comparison, data = allModels_delta)
+summary(delta_model)
+anova(delta_model) #F(3/736)=1.1332 p=0.3348
 
-#summary(lm(DeltaAIC~comparison, data = allModels_delta_g)) #F(3/736)=94.578 < 2.2e-16 ***
-#anova(lm(DeltaAIC~comparison, data = allModels_delta_g))
-
+# All models 
 mod_all <- all_results %>%
   filter_all(all_vars(!is.infinite(.)))%>%
-  distinct(Dataset, Model, .keep_all = T)
+  distinct(Dataset, Model, .keep_all = T) %>% 
+filter(Model != "gompertz_survival_rawtime") 
 
-summary(lm(AICc~Model, data = mod_all)) 
-anova(lm(AICc~Model, data = mod_all)) #F(4/1018) = 22.55 p = < 2.2e-16 ***
+# All models plot 
+all_models <- ggplot(mod_all, aes(y = AICc, x = Model)) +
+  geom_hline (yintercept = 0, linetype = "dashed")+
+  geom_jitter(size = 3, shape = 21, color = "grey50", alpha = 0.7)+
+  geom_boxplot(fill = "white", , alpha  = 0.5)+
+  mytheme+
+  labs(y = expression(AICc[G] - AICc[j]), x = NULL)+
+  #scale_x_discrete(labels = c("Exponential", "Weibull", "Log-logistic", "Gen.-gamma"))+
+  scale_y_continuous(limits = c(-30,30))+
+  scale_fill_manual(values = palette_10)
 
+model_all <- lm(AICc~Model, data = mod_all)
+summary(model_all)
+anova(model_all) #F(4/1018) = 22.55 p = < 2.2e-16 ***
+all_tukey_comparison <- tukey_hsd(model_all)
+
+# Comparison of Gompertz with other models
+# Delta Model i - Exponential for other models 
+allModels_delta_gompertz <- all_results %>%
+  filter(Model != "gompertz_survival_rawtime") %>% 
+distinct(Dataset, Model, .keep_all = T) %>%
+  dplyr::select(Dataset, Model, AICc) %>%
+  spread(Model, AICc) %>%
+  group_by(Dataset) %>%
+  summarise(exponential = mean(exponential, na.rm = TRUE), gompertz_survival = mean(gompertz_survival, na.rm =T), 
+            generalizedgamma = mean(generalizedgamma, na.rm = TRUE), loglogistic = mean(loglogistic, na.rm = TRUE),
+            weibull = mean(weibull, na.rm = TRUE)) %>%
+  ungroup() %>%
+  rowwise() %>%
+  mutate(DeltaExponential = gompertz_survival - exponential, 
+         DeltaWeibull  = gompertz_survival - weibull, 
+         DeltaLoglogistic = gompertz_survival - loglogistic, 
+         DeltaGamma = gompertz_survival - generalizedgamma) %>%
+  pivot_longer(DeltaExponential:DeltaGamma, names_to = "comparison", values_to = "DeltaAIC")%>%
+  filter_all(all_vars(!is.na(.))) %>%
+  filter_all(all_vars(!is.nan(.))) %>%
+  filter_all(all_vars(!is.infinite(.))) 
+
+
+op_rew_supp <- ggplot(allModels_delta_gompertz, aes(y = DeltaAIC, x = comparison)) +
+  geom_hline (yintercept = 0, linetype = "dashed")+
+  geom_jitter(size = 3, shape = 21, color = "grey50", alpha = 0.7)+
+  geom_boxplot(fill = "white", , alpha  = 0.5)+
+  mytheme+
+  labs(y = expression(AICc[G] - AICc[j]), x = NULL)+
+  scale_x_discrete(labels = c("Exponential", "Weibull", "Log-logistic", "Gen.-gamma"))+
+  scale_y_continuous(limits = c(-30,30))+
+  scale_fill_manual(values = palette_10)
+
+
+model_rew <- lm(DeltaAIC~comparison, data = allModels_delta_gompertz)
+summary(model_rew)
+anova(model_rew)
+delta_gomp_comp <- tukey_hsd(model_rew, method = "bonferoni")
+write_csv(delta_gomp_comp, "data/DeltaGompertz_comparison.csv")
 ###############################################################################################
 
 ###############################################
@@ -1372,6 +1580,30 @@ datatype_p_c <- ggplot(sum_pat_AIC_long_percent_c, aes(y = Mean_AIC, x = Mortali
 constant_plot     <- otherplots2_c + otherplots3_c + datatype_p_c + plot_annotation(tag_levels = 'A')
 constant_plot_alt <- otherplots2_c + otherplots3_c_alt + datatype_p_c + plot_annotation(tag_levels = 'A')
 
+
+# Review
+
+sum_AIC_constant_rew <- allData_AIC_filled %>%
+  left_join(allModels_delta_gomp, by = "Dataset") %>%
+  distinct(Dataset, .keep_all = T) %>%
+  left_join(results_with_classification_all, by = "Dataset")  %>%
+  group_by(Mortality_Type)
+  
+otherplots2_c_rew <- ggplot(sum_AIC_constant_rew, aes(y = Num_Obs, x = Mortality_Type)) +
+  geom_boxplot()+
+  mytheme +
+  theme(legend.position = "none") +
+  labs(x = NULL, y = "Num. Observations")
+
+otherplots3_c_alt_rew <- ggplot(sum_AIC_constant_rew, aes(y = Max_num_host_filled, x = Mortality_Type)) +
+  geom_boxplot()+
+  mytheme +
+  theme(legend.position = "none") +
+  labs(x = NULL, y = "Num. Host") 
+
+constant_plot_alt_rew <- otherplots2_c_rew + otherplots3_c_alt_rew + datatype_p_c + plot_annotation(tag_levels = 'A')
+
+
 # Stats 
 sum_AIC_constant_stats <- allData_AIC_filled %>%
   left_join(allModels_delta_gomp, by = "Dataset") %>%
@@ -1404,3 +1636,32 @@ contingency_table <- table(sum_AIC_constant_per$Mortality_Type, sum_AIC_constant
 
 # Perform the chi-square test of independence
 chi_square_test <- chisq.test(contingency_table)
+
+
+# Add to the attribute table 
+attribute_results <- all_results %>%
+  filter(!Model == "gompertz_survival_rawtime") %>%
+  distinct(Dataset, Model, .keep_all = T) %>%
+  select(Dataset, Model, AICc, lambda, k, a, b, alpha, beta, gamma)
+
+# Wrangle data to create separate columns for each model's parameters
+cleaned_data <- attribute_results %>%
+  # Pivot to wider format, using Model as a prefix for each parameter
+  pivot_wider(
+    names_from = Model,
+    values_from = c(AICc, lambda, k, a, b, alpha, beta, gamma),
+    names_glue = "{Model}_{.value}"
+  ) %>%
+  select(
+    Dataset,
+    constant_AICc = exponential_AICc, constant_lambda = exponential_lambda,
+    gompertz_AICc = gompertz_survival_AICc,survival_a = gompertz_survival_a, 
+    gompertz_b = gompertz_survival_b,
+    weibull_AICc, weibull_lambda, weibull_k,
+    loglogistic_AICc, loglogistic_alpha, loglogistic_beta,
+    gamma_AICc = generalizedgamma_AICc, gamma_alpha = generalizedgamma_alpha, 
+    gamma_beta = generalizedgamma_beta, gamma_gamma = generalizedgamma_gamma
+  ) %>%
+  mutate(deltaCG = constant_AICc - gompertz_AICc)
+
+write.csv(cleaned_data, "attributes2.csv", row.names = F)
