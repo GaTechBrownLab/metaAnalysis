@@ -944,7 +944,7 @@ allData_AIC_sum_num <- allData_AIC_filled %>%
 
 # Delta Model i - Exponential for other models 
 allModels_delta <- all_results %>%
-  filter(Model != "gompertz_survival_rawtime") v
+  filter(Model != "gompertz_survival_rawtime") %>%
   distinct(Dataset, Model, .keep_all = T) %>%
   dplyr::select(Dataset, Model, AICc) %>%
   spread(Model, AICc) %>%
