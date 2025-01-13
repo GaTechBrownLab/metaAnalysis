@@ -986,12 +986,12 @@ palette_6 <- c("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02")
 
 allModels_delta_merge <- allModels_delta %>%
   left_join(allData_AIC_filled, by = "Dataset") %>%
- distinct(Dataset, comparison, .keep_all = T) 
+  distinct(Dataset, comparison, .keep_all = T) 
 
 allModels_delta_merge$Host_taxa <- factor(allModels_delta_merge$Host_taxa, 
-                                         levels = (c("Seedlings",  
-                                                        "Nematodes", "Other invertebrates", "Drosophila sp.", "Moth larvae", "Other insects",
-                                                        "Avian", "Mice", "Other mammals", "Fish")))
+                                          levels = (c("Seedlings",  
+                                                      "Nematodes", "Other invertebrates", "Drosophila sp.", "Moth larvae", "Other insects",
+                                                      "Avian", "Mice", "Other mammals", "Fish")))
 
 
 op_rew <- ggplot(allModels_delta_merge, aes(y = DeltaAIC, x = comparison, fill = Host_taxa)) +
@@ -1005,7 +1005,6 @@ op_rew <- ggplot(allModels_delta_merge, aes(y = DeltaAIC, x = comparison, fill =
   scale_fill_manual(values = palette_10)
 
 
-# Combine the plots and add labels
 op <- op + theme(axis.text.x = element_text(angle = 45, hjust = 1))
 op_rew <- op_rew + theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
