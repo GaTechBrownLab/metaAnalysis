@@ -1,0 +1,7 @@
+term,group1,group2,null.value,estimate,conf.low,conf.high,p.adj,p.adj.signif
+comparison,DeltaExponential,DeltaGamma,0,27.87206569586027,21.818855435818087,33.92527595590246,0,****
+comparison,DeltaExponential,DeltaLoglogistic,0,31.71862350164651,25.66541324160432,37.7718337616887,0,****
+comparison,DeltaExponential,DeltaWeibull,0,35.15492342747024,29.101713167428052,41.20813368751242,0,****
+comparison,DeltaGamma,DeltaLoglogistic,0,3.846557805786237,-2.20665245425595,9.899768065828424,0.359,ns
+comparison,DeltaGamma,DeltaWeibull,0,7.282857731609969,1.229647471567782,13.336067991652156,0.0109,*
+comparison,DeltaLoglogistic,DeltaWeibull,0,3.436299925823732,-2.616910334218455,9.48951018586592,0.461,ns
