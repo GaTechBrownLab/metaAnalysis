@@ -1,6 +1,6 @@
 # Meta survival data analysis
 # Author: Canan Karakoc
-# Last update: October 30, 2024
+# Last update: February 22, 2025
 
 ################################################################################################
 # SETUP #
@@ -492,9 +492,6 @@ standardized_final_df <- read.table("data/standardized_final_df.csv", header = T
 all_results <- read.table("data/results_df.csv", header = T, sep = ",", dec = ".")
 all_predictions <- read.table("data/all_predictions.csv", header = T, sep = ",", dec = ".")
 
-#all_results <- read.table("~/GitHub/metaAnalysis_largeFiles/results_predictions/results_df.csv", header = T, sep = ",", dec = ".")
-#all_predictions <- read.table("~/GitHub/metaAnalysis_largeFiles/results_predictions/all_predictions.csv", header = T, sep = ",", dec = ".")
-
 ###############################################################################################
 # FIGURE 1 & FIGURE S1 #
 ###############################################################################################
@@ -540,7 +537,6 @@ fig1 <- ggplot(fig1_dat1, aes(x = Time_std, y = Standardized_Survival)) +
     legend.justification = c(0, 0) # Aligning the legend to the bottom left
   )+coord_fixed(ratio = 1)
   
-
 ggsave("figures/fig1.pdf", plot = fig1, width = 6.5, height = 5.5, units = "in", dpi = 300)
 
 # Plotting - Save to model_plots folder
@@ -652,7 +648,8 @@ allData_AIC_filled <- all_results %>%
   left_join(standardized_final_df, by = c("Dataset" = "Full_key")) %>%
   left_join(mergedata, by = "Dataset") %>%  
   mutate(Max_num_host_filled = coalesce(as.numeric(Max_num_host), as.numeric(Max_num_hosts))) %>%
-  dplyr::select(Dataset, Model, AICc, Num_Obs, Host_taxa, Pathogen_taxa, Data, Max_num_host_filled)
+  dplyr::select(Dataset, Model, AICc, Num_Obs, Host_taxa, Pathogen_taxa, Data, Max_num_host_filled) %>%
+  distinct(Dataset, Model, .keep_all = T)
 
 rows_with_na <- apply(allData_AIC_filled, 1, function(x) any(is.na(x)))
 allData_AIC_filled[rows_with_na, ]
@@ -1249,7 +1246,6 @@ dataForStats <- allData_AIC_filled %>%
   filter_if(is.numeric, all_vars(is.finite(.))) %>%
   distinct(Dataset, .keep_all = T) %>%
   select(Host_taxa, Pathogen_taxa, DeltaAIC)
-
 
 results <- dataForStats %>%
   group_by(Host_taxa) %>%

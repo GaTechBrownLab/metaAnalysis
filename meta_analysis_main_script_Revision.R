@@ -1,6 +1,6 @@
 # Meta survival data analysis
 # Author: Canan Karakoc
-# Last update: December 11, 2024
+# Last update: February 22, 2024
 
 ################################################################################################
 # SETUP #
@@ -652,7 +652,8 @@ allData_AIC_filled <- all_results %>%
   left_join(standardized_final_df, by = c("Dataset" = "Full_key")) %>%
   left_join(mergedata, by = "Dataset") %>%  
   mutate(Max_num_host_filled = coalesce(as.numeric(Max_num_host), as.numeric(Max_num_hosts))) %>%
-  dplyr::select(Dataset, Model, AICc, Num_Obs, Host_taxa, Pathogen_taxa, Data, Max_num_host_filled)
+  dplyr::select(Dataset, Model, AICc, Num_Obs, Host_taxa, Pathogen_taxa, Data, Max_num_host_filled) %>%
+  distinct(Dataset, Model, .keep_all = T)
 
 rows_with_na <- apply(allData_AIC_filled, 1, function(x) any(is.na(x)))
 allData_AIC_filled[rows_with_na, ]
@@ -681,6 +682,15 @@ allData_AIC_sum <- allData_AIC_filled %>%
   ungroup() %>%
   filter(!Model == "gompertz_survival_rawtime") 
 
+allData_AIC_filled_clean <- allData_AIC_filled %>%
+  filter(
+    is.finite(as.numeric(AICc)),
+    is.finite(as.numeric(Num_Obs)),
+    is.finite(as.numeric(Max_num_host_filled))
+  ) %>%
+  distinct(Dataset, Model, .keep_all = T) %>%
+  filter(!Model == "gompertz_survival_rawtime") 
+  
 # Order factor levels
 allData_AIC_sum$Host_taxa <- factor(allData_AIC_sum$Host_taxa, 
                                      levels = c("Seedlings", "Drosophila sp.", "Other insects", 
@@ -690,6 +700,7 @@ allData_AIC_sum$Host_taxa <- factor(allData_AIC_sum$Host_taxa,
 allData_AIC_sum$Model <- factor(allData_AIC_sum$Model, 
                                  levels = c("exponential", "gompertz_survival", "weibull", 
                                             "loglogistic", "generalizedgamma"))
+
 
 # Create the plot and add the annotations
 host_aic <- ggplot(allData_AIC_sum, aes(x = Model, y = meanAIC, color = Model)) +
@@ -710,35 +721,24 @@ ggsave("figures/host_aic.pdf", plot = host_aic, width = 6, height = 13, units = 
 
 
 # Stat 
-allData_AIC_stat <- allData_AIC_filled %>%
-  filter(
-    is.finite(as.numeric(AICc)),
-    is.finite(as.numeric(Num_Obs)),
-    is.finite(as.numeric(Max_num_host_filled))
-  ) %>%
-  distinct(Dataset, Model, .keep_all = T)
-
-
-library(rstatix)
-library(multcompView)
+library(lme4)
+library(lmerTest)
+library(boot)
 library(emmeans)
-library(multcomp)
 library(purrr)
+library(dplyr)
 
-# Create CLDs for AICc comparisons within each Host_taxa group
-cld_results <- allData_AIC_stat %>%
+cld_results_lme <- allData_AIC_filled_clean %>%
   filter(!Model == "gompertz_survival_rawtime") %>%
   group_by(Host_taxa) %>%
   nest() %>% # Nest data by Host_taxa for grouped operations
   mutate(
-    model = map(data, ~ lm(AICc ~ Model, data = .x)), # Fit a model for each Host_taxa
-    emms = map(model, ~ emmeans(.x, pairwise ~ Model)), # Get emmeans and pairwise comparisons
-    cld = map(emms, ~ cld(.x)) # Generate compact letter displays
+    model = map(data, ~ lmer(AICc ~ Model + (1 | Dataset), data = .x)),  # LME model with Dataset as a random effect
+    emms = map(model, ~ emmeans(.x, pairwise ~ Model, adjust = "Bonferroni")), 
+    cld = map(emms, ~ cld(.x))  # Generate compact letter displays
   ) %>%
-  # Define Host_taxa as names for the cld list
-  mutate(Host_taxa = as.character(Host_taxa)) %>% # Ensure Host_taxa is a character vector
-  { set_names(.$cld, .$Host_taxa) } # Set the names of the cld list to Host_taxa
-
+  mutate(Host_taxa = as.character(Host_taxa)) %>%  # Ensure Host_taxa is a character vector
+  { set_names(.$cld, .$Host_taxa) }  # Set the names of the cld list to Host_taxa
 
 # Function to map numbers to letters, cleaning input first
 number_to_letter <- function(x) {
@@ -755,7 +755,7 @@ number_to_letter <- function(x) {
   })
 }
 
-cld_data <- cld_results %>%
+cld_data <- cld_results_lme %>%
   map_dfr(~ as.data.frame(.), .id = "Host_taxa") %>%
   mutate(letters = number_to_letter(.group))
 
@@ -771,7 +771,7 @@ allData_AIC_sum_cld$Host_taxa <- factor(allData_AIC_sum_cld$Host_taxa,
 # Create the plot and add the CLD letters
 host_aic_cld <- ggplot(allData_AIC_sum_cld, aes(x = Model, y = meanAIC, color = Model)) +
   geom_point(size = 5, shape = 21) +
-  geom_errorbar(aes(ymin = meanAIC - seAIC, ymax = meanAIC + seAIC), width = 0.2) +
+  geom_errorbar(aes(ymin = meanAIC - sdAIC, ymax = meanAIC + sdAIC), width = 0.2) +
   facet_wrap(~Host_taxa, ncol = 2, scales = "free") +
   mytheme +
   theme(axis.text.x = element_blank(), strip.background = element_blank(), axis.title.x = element_blank()) +
@@ -781,13 +781,12 @@ host_aic_cld <- ggplot(allData_AIC_sum_cld, aes(x = Model, y = meanAIC, color = 
   geom_text(aes(label = paste0("num. time obs. = ", meanObs)), x = Inf, y = Inf, hjust = 1.1, vjust = 2.3, size = 4, check_overlap = TRUE, show.legend = FALSE) +
   geom_text(aes(label = paste0("avg. host reps = ", meanHost)), x = Inf, y = Inf, hjust = 1.1, vjust = 3.4, size = 4, check_overlap = TRUE, show.legend = FALSE) +
   # Add CLD letters above error bars
-  geom_text(aes(label = letters, y = meanAIC + seAIC), vjust = -0.5, size = 4, check_overlap = TRUE, show.legend = FALSE) +
+  geom_text(aes(label = letters, y = meanAIC + sdAIC), vjust = -0.5, size = 4, check_overlap = TRUE, show.legend = FALSE) +
   # Add space at the top of each panel
   scale_y_continuous(expand = expansion(mult = c(0.05, 0.5))) +
   theme(legend.position = "bottom") +
   guides(color = guide_legend(nrow = 2, byrow = TRUE)) +
   scale_color_manual(values = cbpalette, labels = c("Constant", "Gompertz", "Weibull", "Log-logistic", "Gen.-gamma"))
-
 
 ggsave("figures/host_aic_cld.pdf", plot = host_aic_cld, width = 6, height = 12, units = "in", dpi = 300)
 
@@ -805,11 +804,14 @@ PallData_AIC_sum <- allData_AIC_filled %>%
   summarize(
     meanAIC = mean(as.numeric(AICc)),
     seAIC = standard_error(as.numeric(AICc)),
+    sdAIC = sd(as.numeric(AICc)),
     meanObs = round(mean(as.numeric(Num_Obs)), 0),
     meanHost = round(mean(as.numeric(Max_num_host_filled), na.rm = T), 0),
     numData = length(unique(Dataset))
   ) %>%
+  ungroup() %>%
   filter(!Model == "gompertz_survival_rawtime") 
+
 
 PallData_AIC_sum$Pathogen_taxa <- factor(PallData_AIC_sum$Pathogen_taxa, 
                                           levels = c("Gram-positive bacteria", "Gram-negative bacteria",
@@ -838,22 +840,21 @@ pathogen_aic <- ggplot(PallData_AIC_sum, aes(x = Model, y = meanAIC, color = Mod
 
 ggsave("figures/pathogen_aic.pdf", plot = pathogen_aic, width = 6, height = 8, units = "in", , dpi = 300)
 
-
 # Create CLDs for AICc comparisons within each Host_taxa group
-cld_results_pat <- allData_AIC_stat %>%
+
+cld_results_lme_pat <- allData_AIC_filled_clean %>%
   filter(!Model == "gompertz_survival_rawtime") %>%
   group_by(Pathogen_taxa) %>%
   nest() %>% # Nest data by Host_taxa for grouped operations
   mutate(
-    model = map(data, ~ lm(AICc ~ Model, data = .x)), # Fit a model for each Host_taxa
-    emms = map(model, ~ emmeans(.x, pairwise ~ Model)), # Get emmeans and pairwise comparisons
-    cld = map(emms, ~ cld(.x)) # Generate compact letter displays
+    model = map(data, ~ lmer(AICc ~ Model + (1 | Dataset), data = .x)),  # LME model with Dataset as a random effect
+    emms = map(model, ~ emmeans(.x, pairwise ~ Model, adjust = "Bonferroni")), # Get emmeans with Kenward-Roger df correction
+    cld = map(emms, ~ cld(.x))  # Generate compact letter displays
   ) %>%
-  # Define Host_taxa as names for the cld list
-  mutate(Pathogen_taxa = as.character(Pathogen_taxa)) %>% # Ensure Host_taxa is a character vector
-  { set_names(.$cld, .$Pathogen_taxa) } # Set the names of the cld list to Host_taxa
+  mutate(Pathogen_taxa = as.character(Pathogen_taxa)) %>%  # Ensure Host_taxa is a character vector
+  { set_names(.$cld, .$Pathogen_taxa) }  # Set the names of the cld list to Host_taxa
 
-cld_data_pat <- cld_results_pat %>%
+cld_data_pat <- cld_results_lme_pat %>%
   map_dfr(~ as.data.frame(.), .id = "Pathogen_taxa") %>%
   mutate(letters = number_to_letter(.group))
 
@@ -865,11 +866,21 @@ allData_AIC_sum_cld_pat$Pathogen_taxa <- factor(allData_AIC_sum_cld_pat$Pathogen
                                          levels = c("Gram-positive bacteria", "Gram-negative bacteria",
                                                     "DNA virus", "RNA virus", "Fungi", "Protozoan parasite"))
 
+allData_AIC_sum_cld_pat$Model <- factor(allData_AIC_sum_cld_pat$Model, 
+                                 levels = c("exponential", "gompertz_survival", "weibull", 
+                                            "loglogistic", "generalizedgamma"))
+
+test_host <- allData_AIC_sum_cld%>%
+  dplyr::select(Model, Host_taxa, letters)
+
+test_pat <- allData_AIC_sum_cld_pat%>%
+  dplyr::select(Model, Pathogen_taxa, letters)
+
 # Create the plot and add the CLD letters
 pat_aic_cld <- ggplot(allData_AIC_sum_cld_pat, aes(x = Model, y = meanAIC, color = Model)) +
   geom_point(size = 5, shape = 21) +
-  geom_errorbar(aes(ymin = meanAIC - seAIC, ymax = meanAIC + seAIC), width = 0.2) +
-  geom_boxplot(data = allData_AIC_stat, aes( y = AICc))+
+  geom_errorbar(aes(ymin = meanAIC - sdAIC, ymax = meanAIC + sdAIC), width = 0.2) +
+ 
   facet_wrap(~Pathogen_taxa, ncol = 2, scales = "free") +
   mytheme +
   theme(axis.text.x = element_blank(), strip.background = element_blank(), axis.title.x = element_blank()) +
@@ -879,7 +890,7 @@ pat_aic_cld <- ggplot(allData_AIC_sum_cld_pat, aes(x = Model, y = meanAIC, color
   geom_text(aes(label = paste0("num. time obs. = ", meanObs)), x = Inf, y = Inf, hjust = 1.1, vjust = 2.3, size = 4, check_overlap = TRUE, show.legend = FALSE) +
   geom_text(aes(label = paste0("avg. host reps = ", meanHost)), x = Inf, y = Inf, hjust = 1.1, vjust = 3.4, size = 4, check_overlap = TRUE, show.legend = FALSE) +
   # Add CLD letters above error bars
-  geom_text(aes(label = letters, y = meanAIC + seAIC), vjust = -0.5, size = 4, check_overlap = TRUE, show.legend = FALSE) +
+  geom_text(aes(label = letters, y = meanAIC + sdAIC), vjust = -0.5, size = 4, check_overlap = TRUE, show.legend = FALSE) +
   # Add space at the top of each panel
   scale_y_continuous(expand = expansion(mult = c(0.05, 0.5))) +
   theme(legend.position = "bottom") +
@@ -887,6 +898,84 @@ pat_aic_cld <- ggplot(allData_AIC_sum_cld_pat, aes(x = Model, y = meanAIC, color
   scale_color_manual(values = cbpalette, labels = c("Constant", "Gompertz", "Weibull", "Log-logistic", "Gen.-gamma"))
 
 ggsave("figures/pathogen_aic_cld.pdf", plot = pat_aic_cld, width = 6, height = 8, units = "in", , dpi = 30)
+
+
+# Second revision boxpots with CLD # 
+
+allData_AIC_cld_new_host <- allData_AIC_filled_clean %>%
+  left_join(cld_data, by = c("Host_taxa", "Model")) %>%
+  left_join(allData_AIC_sum, by = c("Host_taxa", "Model"))
+
+allData_AIC_cld_new$Host_taxa <- factor(allData_AIC_cld_new$Host_taxa, 
+                                             levels = c("Seedlings", "Drosophila sp.", "Other insects", 
+                                                        "Nematodes", "Moth larvae", "Other invertebrates", 
+                                                        "Fish", "Avian", "Mice", "Other mammals"))
+
+allData_AIC_cld_new$Model <- factor(allData_AIC_cld_new$Model, 
+                                         levels = c("exponential", "gompertz_survival", "weibull", 
+                                                    "loglogistic", "generalizedgamma"))
+
+# Summarize letters at group level
+cld_summary <- allData_AIC_cld_new %>%
+  group_by(Host_taxa, Model) %>%
+  reframe(mean = mean(AICc),
+            max = max(AICc), letters = unique(letters))
+
+# Plot
+host_aic_all <- ggplot(allData_AIC_cld_new, aes(x = Model, y = AICc, color = Model)) +
+  geom_jitter(size = 2, shape = 21) +
+  geom_boxplot(alpha = 0.5) +
+  facet_wrap(~Host_taxa, ncol = 2, scales = "free") +
+  mytheme +
+  theme(axis.text.x = element_blank(), strip.background = element_blank(), axis.title.x = element_blank()) +
+  ylab("AICc") +
+  #scale_y_continuous(limits = c(-200, 100)) +
+  theme(legend.position = "bottom") +
+  guides(color = guide_legend(nrow = 2, byrow = TRUE)) +
+  scale_color_manual(values = cbpalette, labels = c("Constant", "Gompertz", "Weibull", "Log-logistic", "Gen.-gamma")) +
+  geom_text(data = cld_summary, aes(x = Model, y = max+10, label = letters), 
+            hjust = 0, size = 4, check_overlap = TRUE, show.legend = FALSE) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.2)))
+
+
+# Pathogen 
+allData_AIC_cld_new_pat <- allData_AIC_filled_clean %>%
+  left_join(cld_data_pat, by = c("Pathogen_taxa", "Model")) %>%
+  left_join(PallData_AIC_sum, by = c("Pathogen_taxa", "Model"))
+
+allData_AIC_cld_new_pat$Pathogen_taxa <- factor(allData_AIC_cld_new_pat$Pathogen_taxa, 
+                                                levels = c("Gram-positive bacteria", "Gram-negative bacteria",
+                                                           "DNA virus", "RNA virus", "Fungi", "Protozoan parasite"))
+
+
+allData_AIC_cld_new_pat$Model <- factor(allData_AIC_cld_new_pat$Model, 
+                                    levels = c("exponential", "gompertz_survival", "weibull", 
+                                               "loglogistic", "generalizedgamma"))
+
+# Summarize letters at group level
+cld_summary_pat <- allData_AIC_cld_new_pat %>%
+  group_by(Pathogen_taxa, Model) %>%
+  reframe(mean = mean(AICc),
+          max = max(AICc), letters = unique(letters))
+
+pat_aic_all <- ggplot(allData_AIC_cld_new_pat, aes(x = Model, y = AICc, color = Model)) +
+  geom_jitter(size = 2, shape = 21) +
+  geom_boxplot(alpha = 0.5) +
+  facet_wrap(~Pathogen_taxa, ncol = 2, scales = "free") +
+  mytheme +
+  theme(axis.text.x = element_blank(), strip.background = element_blank(), axis.title.x = element_blank()) +
+  ylab("AICc") +
+  #scale_y_continuous(limits = c(-200, 100)) +
+  theme(legend.position = "bottom") +
+  guides(color = guide_legend(nrow = 2, byrow = TRUE)) +
+  scale_color_manual(values = cbpalette, labels = c("Constant", "Gompertz", "Weibull", "Log-logistic", "Gen.-gamma")) +
+  geom_text(data = cld_summary_pat, aes(x = Model, y = max+10, label = letters), 
+            hjust = 0, size = 4, check_overlap = TRUE, show.legend = FALSE) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.2)))
+
+
+ggsave("figures/host_aic_cld_box.pdf", plot = host_aic_all, width = 6, height = 12, units = "in", dpi = 300)
+ggsave("figures/pathogen_aic_cld_box.pdf", plot = pat_aic_all, width = 6, height = 8, units = "in", , dpi = 30)
 
 #################################################################################################
 # DATA TYPE #
@@ -958,10 +1047,10 @@ allModels_delta <- all_results %>%
          DeltaWeibull  = exponential - weibull, 
          DeltaLoglogistic = exponential - loglogistic, 
          DeltaGamma = exponential - generalizedgamma) %>%
-  pivot_longer(DeltaGompertz:DeltaGamma, names_to = "comparison", values_to = "DeltaAIC")%>%
+  pivot_longer(DeltaGompertz:DeltaGamma, names_to = "comparison", values_to = "DeltaAIC") %>%
   filter_all(all_vars(!is.na(.))) %>%
   filter_all(all_vars(!is.nan(.))) %>%
-  filter_all(all_vars(!is.infinite(.))) 
+  filter_all(all_vars(!is.infinite(.)))
 
 allModels_delta$comparison <- factor(allModels_delta$comparison, 
                                      levels = c("DeltaGompertz", "DeltaWeibull", 
@@ -974,7 +1063,7 @@ op <- ggplot(allModels_delta, aes(y = DeltaAIC, x = comparison)) +
   geom_boxplot(fill = "white", , alpha  = 0.7)+
   mytheme+
   labs(y = expression(AICc[C] - AICc[j]), x = NULL)+
-  scale_x_discrete(labels = c("Gompertz", "Weibull", "Log-logistic", "Gen.-gamma"))+
+  scale_x_discrete(labels = c("Gompertz", "Weibull", "Log-logistic", "Gen.-gamma")) +
   scale_y_continuous(limits = c(-30,30))
 
 # Review addition: Colors for hosts 
@@ -1029,14 +1118,18 @@ mod_all <- all_results %>%
 filter(Model != "gompertz_survival_rawtime") 
 
 # All models plot 
+mod_all$Model <- factor(mod_all$Model, 
+                                     levels = c("exponential", "gompertz_survival", "weibull", 
+                                                "loglogistic", "generalizedgamma"))
+
 all_models <- ggplot(mod_all, aes(y = AICc, x = Model)) +
   geom_hline (yintercept = 0, linetype = "dashed")+
   geom_jitter(size = 3, shape = 21, color = "grey50", alpha = 0.7)+
   geom_boxplot(fill = "white", , alpha  = 0.5)+
   mytheme+
-  labs(y = expression(AICc[G] - AICc[j]), x = NULL)+
-  #scale_x_discrete(labels = c("Exponential", "Weibull", "Log-logistic", "Gen.-gamma"))+
-  scale_y_continuous(limits = c(-30,30))+
+  labs(y = "AICc")+
+  scale_x_discrete(labels = c("Exponential", "Gompertz", "Weibull", "Log-logistic", "G.-gamma"))+
+  #scale_y_continuous(limits = c(-200,50))+
   scale_fill_manual(values = palette_10)
 
 model_all <- lm(AICc~Model, data = mod_all)
@@ -1061,7 +1154,7 @@ distinct(Dataset, Model, .keep_all = T) %>%
          DeltaWeibull  = gompertz_survival - weibull, 
          DeltaLoglogistic = gompertz_survival - loglogistic, 
          DeltaGamma = gompertz_survival - generalizedgamma) %>%
-  pivot_longer(DeltaExponential:DeltaGamma, names_to = "comparison", values_to = "DeltaAIC")%>%
+  pivot_longer(DeltaExponential:DeltaGamma, names_to = "comparison", values_to = "DeltaAIC") %>%
   filter_all(all_vars(!is.na(.))) %>%
   filter_all(all_vars(!is.nan(.))) %>%
   filter_all(all_vars(!is.infinite(.))) 
@@ -1083,6 +1176,86 @@ summary(model_rew)
 anova(model_rew)
 delta_gomp_comp <- tukey_hsd(model_rew, method = "bonferoni")
 write_csv(delta_gomp_comp, "data/DeltaGompertz_comparison.csv")
+
+###############################################################################################
+# Revision update - bootstap differences to get CIs 
+###############################################################################################
+
+# 1. Inline stats (F-values are incorrect because we assume independence)
+# Here I am doing LMEs using Dataset as a random factor so we don't assume they're independent 
+
+library(lme4)
+library(lmerTest)
+library(boot)
+library(purrr)
+library(emmeans)
+library(broom.mixed)  # Helps extract model outputs
+
+model_all_lme <- lmer(AICc ~ Model + (1|Dataset), data = mod_all)
+summary(model_all_lme)
+anova(model_all_lme, type = 3)
+
+null_model <- lmer(AICc ~ (1 | Dataset), data = mod_all)  # Model without fixed effects
+lrt_result <- anova(null_model, model_all_lme, test = "Chisq")  # Compare models
+
+# Resample data before model 
+
+# Define bootstrap function to resample data
+boot_function <- function(data, indices) {
+  resampled_data <- data[indices, ]  # Resample rows with replacement
+  model <- lmer(AICc ~ Model + (1 | Dataset), data = resampled_data)
+  return(fixef(model))  # Extract fixed effects
+}
+
+# Run bootstrap
+boot_results <- boot(data = mod_all, statistic = boot_function, R = 1000)
+
+# Get estimated marginal means
+emmeans(model_all_lme, pairwise ~ Model, adjust = "tukey")
+pairwise_results_bonf    <- emmeans(model_all_lme, pairwise ~ Model, adjust = "bonferroni")  # Bonferroni correction
+pairwise_results_bonf_df <- as.data.frame(pairwise_results_bonf$contrasts)
+
+# Get these estimates with bootstrapped models to estimate the bias 
+boot_function_contrasts <- function(data, indices) {
+  resampled_data <- data[indices, ]  
+  model <- tryCatch(
+    lmer(AICc ~ Model + (1 | Dataset), data = resampled_data), 
+    error = function(e) return(rep(NA, 10))  # Return 10 NAs if model fails
+  )
+  
+  emm <- tryCatch(
+    emmeans(model, pairwise ~ Model, adjust = "bonferroni"), 
+    error = function(e) return(rep(NA, 10))
+  )
+  
+  contrasts_df <- as.data.frame(emm$contrasts)
+  
+  # Return a numeric vector with fixed length (ensuring 10 contrasts)
+  return(if (!is.null(contrasts_df)) as.numeric(contrasts_df$estimate) else rep(NA, 10))
+}
+
+set.seed(12345)
+boot_results_contrasts <- boot(data = mod_all, statistic = boot_function_contrasts, R = 1000)
+
+boot_contrasts_summary <- map_dfr(1:ncol(boot_results_contrasts$t), function(i) {
+  tibble(
+    Contrast = colnames(boot_results_contrasts$t)[i],  # Assign correct contrast name
+    Estimate_Boot = mean(boot_results_contrasts$t[, i], na.rm = TRUE),
+    SE_Boot = sd(boot_results_contrasts$t[, i], na.rm = TRUE),
+    CI_lower_Boot = quantile(boot_results_contrasts$t[, i], 0.025, na.rm = TRUE),
+    CI_upper_Boot = quantile(boot_results_contrasts$t[, i], 0.975, na.rm = TRUE)
+  )
+})
+
+combined_results <- pairwise_results_bonf_df %>%
+  left_join(boot_contrasts_summary, by = "contrast") %>%
+  dplyr::select(contrast, estimate, SE, t.ratio, p.value, Estimate_Boot, SE_Boot, CI_lower_Boot, CI_upper_Boot)
+
+write.csv(combined_results, "bootstrapped_comparisons01.csv", row.names = FALSE)
+
+# Line 171-172 (reviewer comment)
+# We won't compare delta values. As reviewer using all Models is a better idea
+# This model inflates p-values 
 ###############################################################################################
 
 ###############################################
@@ -1498,6 +1671,122 @@ results_pat <- dataForStats %>%
     )
   ) %>%
   select(-t_test_result)
+
+######################## NEW ###############################
+# Second Revision - Figure 3 - parameter b comparison
+############################################################
+
+param_b <- all_results %>%
+  filter(Model == "gompertz_survival") %>%
+  left_join(standardized_final_df, by = c("Dataset" = "Full_key")) %>%
+  distinct(Dataset, Model, .keep_all = T) %>%
+  dplyr::select(Dataset, Model, AICc, b, Host_taxa, Pathogen_taxa)
+
+param_b$Host_taxa <- factor(param_b$Host_taxa, 
+                              levels = rev(c("Seedlings",  
+                                             "Nematodes", "Other invertebrates", "Drosophila sp.", "Moth larvae", "Other insects",
+                                             "Avian", "Mice", "Other mammals", "Fish")))
+
+param_b_plot <- ggplot(param_b, aes(x = b, y = Host_taxa))+
+  geom_vline(xintercept = 0, linetype = "dashed", color = "darkred")+
+  geom_jitter(shape = 21, size = 2, alpha = 0.5) +
+  geom_boxplot(fill = "white", alpha = 0.5)+
+  mytheme+
+  theme(legend.position = "none")+
+  labs(x = "Gompertz model, parameter b", y = NULL)+
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.3)))
+
+param_b$Pathogen_taxa <- factor(param_b$Pathogen_taxa, 
+                                       levels = rev(c("Protozoan parasite",  
+                                                      "Fungi", "Gram-negative bacteria", "Gram-positive bacteria", 
+                                                      "DNA virus", "RNA virus")))
+
+param_b_plot_pat <- ggplot(param_b, aes(x = b, y = Pathogen_taxa))+
+  geom_vline(xintercept = 0, linetype = "dashed", color = "darkred")+
+  geom_jitter(shape = 21, size = 2, alpha = 0.5) +
+  geom_boxplot(fill = "white", alpha = 0.5)+
+  mytheme+
+  theme(legend.position = "none")+
+  labs(x = "Gompertz model, parameter b", y = NULL)+
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.3)))
+
+allModels_delta_gomp_for_fig$Host_taxa <- factor(allModels_delta_gomp_for_fig$Host_taxa, 
+                            levels = rev(c("Seedlings",  
+                                           "Nematodes", "Other invertebrates", "Drosophila sp.", "Moth larvae", "Other insects",
+                                           "Avian", "Mice", "Other mammals", "Fish")))
+
+AICc_b_plot <- ggplot(allModels_delta_gomp_for_fig, aes(x = DeltaAIC, y = Host_taxa))+
+  #geom_vline(xintercept = 0, linetype = "dashed", color = "darkred")+
+  geom_jitter(shape = 21, size = 2, alpha = 0.5) +
+  geom_boxplot(fill = "white", alpha = 0.5)+
+  mytheme+
+  theme(legend.position = "none")+
+  labs(x = expression(Delta[CG]), y = NULL)+
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.3)))
+
+allModels_delta_gomp_for_fig$Pathogen_taxa <- factor(allModels_delta_gomp_for_fig$Pathogen_taxa, 
+                                levels = rev(c("Protozoan parasite",  
+                                               "Fungi", "Gram-negative bacteria", "Gram-positive bacteria", 
+                                               "DNA virus", "RNA virus")))
+
+AICc_b_plot_pat <- ggplot(allModels_delta_gomp_for_fig, aes(x = DeltaAIC, y = Pathogen_taxa))+
+  #geom_vline(xintercept = 0, linetype = "dashed", color = "darkred")+
+  geom_jitter(shape = 21, size = 2, alpha = 0.5) +
+  geom_boxplot(fill = "white", alpha = 0.5)+
+  mytheme+
+  theme(legend.position = "none")+
+  labs(x = expression(Delta[CG]), y = NULL)+
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.3)))
+
+ggsave("figures/param_b_plot.pdf", plot = param_b_plot, width = 6.5, height = 5.5, units = "in", dpi = 300)
+ggsave("figures/param_b_plot_pat.pdf", plot = param_b_plot_pat, width = 6.5, height = 5.5, units = "in", dpi = 300)
+ggsave("figures/AICc_b_plot.pdf", plot = AICc_b_plot, width = 6.5, height = 5.5, units = "in", dpi = 300)
+ggsave("figures/AICc_b_plot_pat.pdf", plot = AICc_b_plot_pat, width = 6.5, height = 5.5, units = "in", dpi = 300)
+
+fig_3_rev_combo <- AICc_b_plot + AICc_b_plot_pat + param_b_plot + param_b_plot_pat + plot_annotation(tag_levels = 'A')
+ggsave("figures/AICc_b_plot.pdf", plot = fig_3_rev_combo, width = 11, height = 9, units = "in", dpi = 300)
+
+
+#Stats for param_b
+results_b <- param_b %>%
+  group_by(Host_taxa) %>%
+  summarize(
+    t_test_result = list(t.test(b, mu = 0)),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    t_statistic = map_dbl(t_test_result, ~ .x$statistic),
+    p_value = map_dbl(t_test_result, ~ .x$p.value),
+    mean_deltaAIC = map_dbl(t_test_result, ~ .x$estimate),
+    significance = case_when(
+      p_value <= 0.001 ~ "***",
+      p_value <= 0.01  ~ "**",
+      p_value <= 0.05  ~ "*",
+      p_value <= 0.1   ~ ".",
+      TRUE             ~ ""
+    )
+  ) %>%
+  dplyr::select(-t_test_result)
+
+results_pat <- param_b %>%
+  group_by(Pathogen_taxa) %>%
+  summarize(
+    t_test_result = list(t.test(b, mu = 0)),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    t_statistic = map_dbl(t_test_result, ~ .x$statistic),
+    p_value = map_dbl(t_test_result, ~ .x$p.value),
+    mean_deltaAIC = map_dbl(t_test_result, ~ .x$estimate),
+    significance = case_when(
+      p_value <= 0.001 ~ "***",
+      p_value <= 0.01  ~ "**",
+      p_value <= 0.05  ~ "*",
+      p_value <= 0.1   ~ ".",
+      TRUE             ~ ""
+    )
+  ) %>%
+  dplyr::select(-t_test_result)
 
 ###########################################################
 # Constant mortality exploration #
